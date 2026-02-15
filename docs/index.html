@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICU Census Prediction Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    background: linear-gradient(135deg, #0f1218 0%, #151b28 50%, #0f1218 100%);
+    color: #e2e8f0; min-height: 100vh; padding: 24px;
+  }
+  .container { max-width: 1140px; margin: 0 auto; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  .header h1 {
+    font-size: 26px; font-weight: 700; letter-spacing: -0.5px;
+    background: linear-gradient(90deg, #60a5fa, #34d399);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .header p { color: #64748b; font-size: 13px; margin-top: 2px; }
+  .badge {
+    padding: 6px 16px; border-radius: 6px; font-weight: 700; font-size: 13px; letter-spacing: 0.5px;
+  }
+  .badge-safe { background: #059669; color: #ecfdf5; }
+  .badge-near { background: #d97706; color: #fffbeb; }
+  .badge-risk { background: #dc2626; color: #fef2f2; }
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .card {
+    background: #1a1f2e; border-radius: 14px; padding: 20px 22px;
+    border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 4px 24px rgba(0,0,0,0.2);
+  }
+  .card-title { font-size: 14px; font-weight: 600; color: #94a3b8; margin-bottom: 14px; letter-spacing: 0.3px; }
+  .metric-label { font-size: 12px; color: #64748b; font-weight: 500; text-align: center; }
+  .metric-value { font-size: 28px; font-weight: 700; text-align: center; line-height: 1.2; }
+  .metric-sub { font-size: 11px; color: #64748b; text-align: center; margin-top: 2px; }
+  .metric-unit { font-size: 14px; font-weight: 400; margin-left: 2px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 18px; background: #1a1f2e; border-radius: 10px; padding: 4px; width: fit-content; }
+  .tab {
+    padding: 8px 20px; border-radius: 8px; border: none; cursor: pointer;
+    font-size: 13px; font-weight: 600; color: #64748b; background: transparent;
+    transition: all 0.2s; font-family: inherit;
+  }
+  .tab.active { background: #2563eb; color: #fff; }
+  .tab:hover:not(.active) { color: #94a3b8; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .span-2 { grid-column: span 2; }
+  .chart-wrap { position: relative; height: 300px; }
+  .chart-wrap-sm { position: relative; height: 260px; }
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stat-card {
+    background: #111827; border-radius: 10px; padding: 16px;
+    border: 1px solid rgba(255,255,255,0.05);
+  }
+  .stat-card h4 { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+  .stat-row { font-size: 11px; color: #94a3b8; line-height: 2.2; }
+  .stat-row strong { color: #e2e8f0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { padding: 8px 12px; text-align: left; color: #64748b; font-weight: 600; border-bottom: 1px solid #334155; }
+  td { padding: 8px 12px; border-bottom: 1px solid #1e293b; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  @media (max-width: 768px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    .span-2 { grid-column: span 1; }
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <h1>ICU Capacity Dashboard</h1>
+      <p>Predicting Census with Arrivals, LOS & Discharge Modeling · By Yashraj Jadhav</p>
+    </div>
+    <span class="badge" id="statusBadge"></span>
+  </div>
+
+  <div class="kpi-row" id="kpiRow"></div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('census')">ICU Census</button>
+    <button class="tab" onclick="switchTab('arrivals')">Arrivals</button>
+    <button class="tab" onclick="switchTab('los')">LOS & Discharge</button>
+  </div>
+
+  <div id="tab-census" class="tab-content active">
+    <div class="grid-2">
+      <div class="card span-2">
+        <div class="card-title">ICU Census Over Time (Last 60 Days)</div>
+        <div class="chart-wrap"><canvas id="censusChart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Daily Arrivals vs Discharges</div>
+        <div class="chart-wrap-sm"><canvas id="arrDischChart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Capacity Status Distribution</div>
+        <div class="chart-wrap-sm"><canvas id="statusChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-arrivals" class="tab-content">
+    <div class="grid-2">
+      <div class="card span-2">
+        <div class="card-title">Arrival Forecast (14-Day Holdout)</div>
+        <div class="chart-wrap"><canvas id="forecastChart"></canvas></div>
+      </div>
+      <div class="card span-2">
+        <div class="card-title">Arrivals by Level of Care (Last 60 Days)</div>
+        <div class="chart-wrap"><canvas id="locChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-los" class="tab-content">
+    <div class="grid-2">
+      <div class="card span-2">
+        <div class="card-title">ICU Discharge Hazard by Day</div>
+        <div class="chart-wrap-sm"><canvas id="hazardChart"></canvas></div>
+      </div>
+      <div class="card span-2">
+        <div class="card-title">LOS Statistics by Unit</div>
+        <div class="stats-grid" id="losStats"></div>
+      </div>
+      <div class="card span-2">
+        <div class="card-title">Model Performance Summary</div>
+        <table id="perfTable"></table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA = {"summary":{"current_census":25,"status":"SAFE","pct_full":69.4,"capacity":36,"avg_arrivals":9.1,"avg_discharges":9.0,"tomorrow_arrivals_pred":53.4,"expected_discharges":6.9,"at_risk_days":32,"total_days":365},"census":[{"date":"2024-12-02","census":34,"arrivals":12,"discharges":11,"det_census":35,"expected_discharges":12.34841925458809,"pct_full":94.44444444444444,"status":"NEAR FULL"},{"date":"2024-12-03","census":37,"arrivals":13,"discharges":10,"det_census":38,"expected_discharges":9.809373163882658,"pct_full":102.77777777777776,"status":"AT RISK"},{"date":"2024-12-04","census":44,"arrivals":15,"discharges":8,"det_census":43,"expected_discharges":10.472824873725838,"pct_full":122.22222222222224,"status":"AT RISK"},{"date":"2024-12-05","census":39,"arrivals":7,"discharges":12,"det_census":41,"expected_discharges":9.048043168784051,"pct_full":108.33333333333331,"status":"AT RISK"},{"date":"2024-12-06","census":37,"arrivals":4,"discharges":6,"det_census":36,"expected_discharges":8.89263326832707,"pct_full":102.77777777777776,"status":"AT RISK"},{"date":"2024-12-07","census":33,"arrivals":8,"discharges":12,"det_census":35,"expected_discharges":9.296070622402254,"pct_full":91.66666666666666,"status":"NEAR FULL"},{"date":"2024-12-08","census":31,"arrivals":11,"discharges":13,"det_census":38,"expected_discharges":7.899998549346857,"pct_full":86.11111111111111,"status":"NEAR FULL"},{"date":"2024-12-09","census":33,"arrivals":10,"discharges":8,"det_census":38,"expected_discharges":10.068827498333912,"pct_full":91.66666666666666,"status":"NEAR FULL"},{"date":"2024-12-10","census":31,"arrivals":8,"discharges":10,"det_census":37,"expected_discharges":8.716293014135811,"pct_full":86.11111111111111,"status":"NEAR FULL"},{"date":"2024-12-11","census":30,"arrivals":10,"discharges":11,"det_census":38,"expected_discharges":8.972705701630797,"pct_full":83.33333333333334,"status":"NEAR FULL"},{"date":"2024-12-12","census":33,"arrivals":6,"discharges":3,"det_census":37,"expected_discharges":7.364374202585381,"pct_full":91.66666666666666,"status":"NEAR FULL"},{"date":"2024-12-13","census":32,"arrivals":7,"discharges":8,"det_census":37,"expected_discharges":6.592489459858165,"pct_full":88.88888888888889,"status":"NEAR FULL"},{"date":"2024-12-14","census":32,"arrivals":8,"discharges":8,"det_census":37,"expected_discharges":7.577135928320154,"pct_full":88.88888888888889,"status":"NEAR FULL"},{"date":"2024-12-15","census":33,"arrivals":14,"discharges":13,"det_census":38,"expected_discharges":13.39278459961813,"pct_full":91.66666666666666,"status":"NEAR FULL"},{"date":"2024-12-16","census":35,"arrivals":14,"discharges":12,"det_census":42,"expected_discharges":10.08697398082226,"pct_full":97.2222222222222,"status":"AT RISK"},{"date":"2024-12-17","census":29,"arrivals":2,"discharges":8,"det_census":37,"expected_discharges":6.880294646597504,"pct_full":80.55555555555556,"status":"NEAR FULL"},{"date":"2024-12-18","census":34,"arrivals":13,"discharges":8,"det_census":41,"expected_discharges":8.579252754884166,"pct_full":94.44444444444444,"status":"NEAR FULL"},{"date":"2024-12-19","census":31,"arrivals":8,"discharges":11,"det_census":41,"expected_discharges":8.193829384159379,"pct_full":86.11111111111111,"status":"NEAR FULL"},{"date":"2024-12-20","census":30,"arrivals":9,"discharges":10,"det_census":42,"expected_discharges":7.968783025126018,"pct_full":83.33333333333334,"status":"NEAR FULL"},{"date":"2024-12-21","census":34,"arrivals":11,"discharges":7,"det_census":44,"expected_discharges":8.51834485696495,"pct_full":94.44444444444444,"status":"NEAR FULL"},{"date":"2024-12-22","census":30,"arrivals":7,"discharges":11,"det_census":41,"expected_discharges":10.312302672825645,"pct_full":83.33333333333334,"status":"NEAR FULL"},{"date":"2024-12-23","census":30,"arrivals":11,"discharges":11,"det_census":42,"expected_discharges":10.246242977591026,"pct_full":83.33333333333334,"status":"NEAR FULL"},{"date":"2024-12-24","census":24,"arrivals":7,"discharges":13,"det_census":38,"expected_discharges":10.54617292654004,"pct_full":66.66666666666666,"status":"SAFE"},{"date":"2024-12-25","census":25,"arrivals":6,"discharges":5,"det_census":37,"expected_discharges":7.431384570743031,"pct_full":69.44444444444444,"status":"SAFE"},{"date":"2024-12-26","census":34,"arrivals":13,"discharges":4,"det_census":40,"expected_discharges":9.94895245592066,"pct_full":94.44444444444444,"status":"NEAR FULL"},{"date":"2024-12-27","census":31,"arrivals":9,"discharges":12,"det_census":40,"expected_discharges":9.106018436386876,"pct_full":86.11111111111111,"status":"NEAR FULL"},{"date":"2024-12-28","census":29,"arrivals":6,"discharges":8,"det_census":37,"expected_discharges":9.17625205441265,"pct_full":80.55555555555556,"status":"NEAR FULL"},{"date":"2024-12-29","census":32,"arrivals":11,"discharges":8,"det_census":37,"expected_discharges":10.960583260894412,"pct_full":88.88888888888889,"status":"NEAR FULL"},{"date":"2024-12-30","census":33,"arrivals":11,"discharges":10,"det_census":39,"expected_discharges":8.551371496245208,"pct_full":91.66666666666666,"status":"NEAR FULL"},{"date":"2024-12-31","census":29,"arrivals":6,"discharges":10,"det_census":34,"expected_discharges":10.670970775401116,"pct_full":80.55555555555556,"status":"NEAR FULL"},{"date":"2025-01-01","census":31,"arrivals":8,"discharges":6,"det_census":32,"expected_discharges":9.57328352199418,"pct_full":86.11111111111111,"status":"NEAR FULL"},{"date":"2025-01-02","census":31,"arrivals":11,"discharges":11,"det_census":35,"expected_discharges":7.523424853326169,"pct_full":86.11111111111111,"status":"NEAR FULL"},{"date":"2025-01-03","census":33,"arrivals":9,"discharges":7,"det_census":36,"expected_discharges":7.665906177346487,"pct_full":91.66666666666666,"status":"NEAR FULL"},{"date":"2025-01-04","census":30,"arrivals":6,"discharges":9,"det_census":35,"expected_discharges":6.913558081546615,"pct_full":83.33333333333334,"status":"NEAR FULL"},{"date":"2025-01-05","census":26,"arrivals":6,"discharges":10,"det_census":34,"expected_discharges":7.099723016850144,"pct_full":72.22222222222221,"status":"SAFE"},{"date":"2025-01-06","census":30,"arrivals":15,"discharges":11,"det_census":38,"expected_discharges":11.26661395842612,"pct_full":83.33333333333334,"status":"NEAR FULL"},{"date":"2025-01-07","census":23,"arrivals":4,"discharges":11,"det_census":33,"expected_discharges":8.708784068733266,"pct_full":63.888888888888886,"status":"SAFE"},{"date":"2025-01-08","census":27,"arrivals":9,"discharges":5,"det_census":35,"expected_discharges":7.015775736121117,"pct_full":75.0,"status":"SAFE"},{"date":"2025-01-09","census":27,"arrivals":5,"discharges":5,"det_census":33,"expected_discharges":7.1867405145947485,"pct_full":75.0,"status":"SAFE"},{"date":"2025-01-10","census":26,"arrivals":8,"discharges":9,"det_census":34,"expected_discharges":6.581845901375839,"pct_full":72.22222222222221,"status":"SAFE"},{"date":"2025-01-11","census":28,"arrivals":11,"discharges":9,"det_census":37,"expected_discharges":7.644990348269474,"pct_full":77.77777777777779,"status":"SAFE"},{"date":"2025-01-12","census":30,"arrivals":9,"discharges":7,"det_census":37,"expected_discharges":8.533758050249407,"pct_full":83.33333333333334,"status":"NEAR FULL"},{"date":"2025-01-13","census":27,"arrivals":11,"discharges":14,"det_census":35,"expected_discharges":12.698046850168796,"pct_full":75.0,"status":"SAFE"},{"date":"2025-01-14","census":29,"arrivals":8,"discharges":6,"det_census":36,"expected_discharges":7.460959119716597,"pct_full":80.55555555555556,"status":"NEAR FULL"},{"date":"2025-01-15","census":31,"arrivals":13,"discharges":11,"det_census":40,"expected_discharges":9.026881235620664,"pct_full":86.11111111111111,"status":"NEAR FULL"},{"date":"2025-01-16","census":30,"arrivals":6,"discharges":7,"det_census":34,"expected_discharges":11.62562580734208,"pct_full":83.33333333333334,"status":"NEAR FULL"},{"date":"2025-01-17","census":31,"arrivals":9,"discharges":8,"det_census":36,"expected_discharges":7.145415255132605,"pct_full":86.11111111111111,"status":"NEAR FULL"},{"date":"2025-01-18","census":29,"arrivals":3,"discharges":5,"det_census":32,"expected_discharges":6.631092980814296,"pct_full":80.55555555555556,"status":"NEAR FULL"},{"date":"2025-01-19","census":27,"arrivals":10,"discharges":12,"det_census":33,"expected_discharges":8.714160485324681,"pct_full":75.0,"status":"SAFE"},{"date":"2025-01-20","census":26,"arrivals":9,"discharges":10,"det_census":35,"expected_discharges":7.092576875613468,"pct_full":72.22222222222221,"status":"SAFE"},{"date":"2025-01-21","census":31,"arrivals":10,"discharges":5,"det_census":35,"expected_discharges":9.74927577919377,"pct_full":86.11111111111111,"status":"NEAR FULL"},{"date":"2025-01-22","census":32,"arrivals":10,"discharges":9,"det_census":37,"expected_discharges":8.005665708709524,"pct_full":88.88888888888889,"status":"NEAR FULL"},{"date":"2025-01-23","census":24,"arrivals":2,"discharges":10,"det_census":33,"expected_discharges":5.854992474131199,"pct_full":66.66666666666666,"status":"SAFE"},{"date":"2025-01-24","census":22,"arrivals":10,"discharges":12,"det_census":32,"expected_discharges":11.452477291279491,"pct_full":61.11111111111112,"status":"SAFE"},{"date":"2025-01-25","census":30,"arrivals":15,"discharges":7,"det_census":38,"expected_discharges":9.169170238122302,"pct_full":83.33333333333334,"status":"NEAR FULL"},{"date":"2025-01-26","census":26,"arrivals":5,"discharges":9,"det_census":36,"expected_discharges":7.305055541246884,"pct_full":72.22222222222221,"status":"SAFE"},{"date":"2025-01-27","census":28,"arrivals":11,"discharges":9,"det_census":36,"expected_discharges":11.396125684539196,"pct_full":77.77777777777779,"status":"SAFE"},{"date":"2025-01-28","census":26,"arrivals":6,"discharges":8,"det_census":34,"expected_discharges":8.366031823532616,"pct_full":72.22222222222221,"status":"SAFE"},{"date":"2025-01-29","census":23,"arrivals":3,"discharges":6,"det_census":32,"expected_discharges":5.373582374098186,"pct_full":63.888888888888886,"status":"SAFE"},{"date":"2025-01-30","census":25,"arrivals":8,"discharges":6,"det_census":33,"expected_discharges":6.917168913213764,"pct_full":69.44444444444444,"status":"SAFE"}],"arrivals_test":[{"date":"2025-01-17","actual":43,"rf_pred":61.95735526502658,"gb_pred":69.53406122192116,"ensemble_pred":65.74570824347387},{"date":"2025-01-18","actual":59,"rf_pred":57.03216264780461,"gb_pred":57.14472020505975,"ensemble_pred":57.088441426432176},{"date":"2025-01-19","actual":50,"rf_pred":48.21121788411031,"gb_pred":51.63096827920996,"ensemble_pred":49.92109308166013},{"date":"2025-01-20","actual":51,"rf_pred":57.96681979165896,"gb_pred":60.33600267960047,"ensemble_pred":59.15141123562971},{"date":"2025-01-21","actual":58,"rf_pred":56.8868589669324,"gb_pred":58.02606605067425,"ensemble_pred":57.45646250880333},{"date":"2025-01-22","actual":69,"rf_pred":57.56172608493791,"gb_pred":54.17483186236512,"ensemble_pred":55.86827897365151},{"date":"2025-01-23","actual":50,"rf_pred":55.73040143360196,"gb_pred":54.188614478594246,"ensemble_pred":54.95950795609811},{"date":"2025-01-24","actual":65,"rf_pred":57.35092968408687,"gb_pred":56.68035789486468,"ensemble_pred":57.015643789475774},{"date":"2025-01-25","actual":61,"rf_pred":57.04900136730467,"gb_pred":57.97102719393684,"ensemble_pred":57.51001428062075},{"date":"2025-01-26","actual":44,"rf_pred":49.802280500772426,"gb_pred":48.547378173041736,"ensemble_pred":49.17482933690708},{"date":"2025-01-27","actual":65,"rf_pred":58.3452215060848,"gb_pred":55.93881749207108,"ensemble_pred":57.14201949907794},{"date":"2025-01-28","actual":57,"rf_pred":57.45031612456104,"gb_pred":54.918685191068576,"ensemble_pred":56.18450065781481},{"date":"2025-01-29","actual":62,"rf_pred":61.3735527445217,"gb_pred":66.90585090651459,"ensemble_pred":64.13970182551815},{"date":"2025-01-30","actual":67,"rf_pred":56.18576962479256,"gb_pred":50.67398824215921,"ensemble_pred":53.42987893347589}],"daily_loc":[{"date":"2024-12-02","arrivals_ICU":12,"arrivals_Med_Surg":21,"arrivals_Other":11,"arrivals_PCU":4,"arrivals_Tele":7,"total_arrivals":55},{"date":"2024-12-03","arrivals_ICU":13,"arrivals_Med_Surg":35,"arrivals_Other":10,"arrivals_PCU":5,"arrivals_Tele":8,"total_arrivals":71},{"date":"2024-12-04","arrivals_ICU":15,"arrivals_Med_Surg":26,"arrivals_Other":7,"arrivals_PCU":6,"arrivals_Tele":2,"total_arrivals":56},{"date":"2024-12-05","arrivals_ICU":7,"arrivals_Med_Surg":27,"arrivals_Other":12,"arrivals_PCU":4,"arrivals_Tele":8,"total_arrivals":58},{"date":"2024-12-06","arrivals_ICU":4,"arrivals_Med_Surg":27,"arrivals_Other":12,"arrivals_PCU":5,"arrivals_Tele":3,"total_arrivals":51},{"date":"2024-12-07","arrivals_ICU":8,"arrivals_Med_Surg":29,"arrivals_Other":12,"arrivals_PCU":1,"arrivals_Tele":8,"total_arrivals":58},{"date":"2024-12-08","arrivals_ICU":11,"arrivals_Med_Surg":19,"arrivals_Other":13,"arrivals_PCU":4,"arrivals_Tele":4,"total_arrivals":51},{"date":"2024-12-09","arrivals_ICU":10,"arrivals_Med_Surg":32,"arrivals_Other":9,"arrivals_PCU":9,"arrivals_Tele":4,"total_arrivals":64},{"date":"2024-12-10","arrivals_ICU":8,"arrivals_Med_Surg":33,"arrivals_Other":12,"arrivals_PCU":4,"arrivals_Tele":5,"total_arrivals":62},{"date":"2024-12-11","arrivals_ICU":10,"arrivals_Med_Surg":25,"arrivals_Other":11,"arrivals_PCU":4,"arrivals_Tele":7,"total_arrivals":57},{"date":"2024-12-12","arrivals_ICU":6,"arrivals_Med_Surg":28,"arrivals_Other":16,"arrivals_PCU":10,"arrivals_Tele":10,"total_arrivals":70},{"date":"2024-12-13","arrivals_ICU":7,"arrivals_Med_Surg":36,"arrivals_Other":9,"arrivals_PCU":11,"arrivals_Tele":7,"total_arrivals":70},{"date":"2024-12-14","arrivals_ICU":8,"arrivals_Med_Surg":37,"arrivals_Other":11,"arrivals_PCU":2,"arrivals_Tele":6,"total_arrivals":64},{"date":"2024-12-15","arrivals_ICU":14,"arrivals_Med_Surg":16,"arrivals_Other":10,"arrivals_PCU":2,"arrivals_Tele":4,"total_arrivals":46},{"date":"2024-12-16","arrivals_ICU":14,"arrivals_Med_Surg":12,"arrivals_Other":12,"arrivals_PCU":4,"arrivals_Tele":9,"total_arrivals":51},{"date":"2024-12-17","arrivals_ICU":2,"arrivals_Med_Surg":23,"arrivals_Other":18,"arrivals_PCU":5,"arrivals_Tele":5,"total_arrivals":53},{"date":"2024-12-18","arrivals_ICU":13,"arrivals_Med_Surg":27,"arrivals_Other":10,"arrivals_PCU":4,"arrivals_Tele":7,"total_arrivals":61},{"date":"2024-12-19","arrivals_ICU":8,"arrivals_Med_Surg":37,"arrivals_Other":8,"arrivals_PCU":6,"arrivals_Tele":5,"total_arrivals":64},{"date":"2024-12-20","arrivals_ICU":9,"arrivals_Med_Surg":24,"arrivals_Other":14,"arrivals_PCU":8,"arrivals_Tele":7,"total_arrivals":62},{"date":"2024-12-21","arrivals_ICU":11,"arrivals_Med_Surg":23,"arrivals_Other":17,"arrivals_PCU":5,"arrivals_Tele":7,"total_arrivals":63},{"date":"2024-12-22","arrivals_ICU":7,"arrivals_Med_Surg":32,"arrivals_Other":9,"arrivals_PCU":3,"arrivals_Tele":1,"total_arrivals":52},{"date":"2024-12-23","arrivals_ICU":11,"arrivals_Med_Surg":18,"arrivals_Other":13,"arrivals_PCU":3,"arrivals_Tele":5,"total_arrivals":50},{"date":"2024-12-24","arrivals_ICU":7,"arrivals_Med_Surg":29,"arrivals_Other":22,"arrivals_PCU":3,"arrivals_Tele":5,"total_arrivals":66},{"date":"2024-12-25","arrivals_ICU":6,"arrivals_Med_Surg":27,"arrivals_Other":8,"arrivals_PCU":4,"arrivals_Tele":6,"total_arrivals":51},{"date":"2024-12-26","arrivals_ICU":13,"arrivals_Med_Surg":34,"arrivals_Other":6,"arrivals_PCU":2,"arrivals_Tele":5,"total_arrivals":60},{"date":"2024-12-27","arrivals_ICU":9,"arrivals_Med_Surg":34,"arrivals_Other":17,"arrivals_PCU":8,"arrivals_Tele":4,"total_arrivals":72},{"date":"2024-12-28","arrivals_ICU":6,"arrivals_Med_Surg":26,"arrivals_Other":13,"arrivals_PCU":5,"arrivals_Tele":8,"total_arrivals":58},{"date":"2024-12-29","arrivals_ICU":11,"arrivals_Med_Surg":27,"arrivals_Other":11,"arrivals_PCU":4,"arrivals_Tele":5,"total_arrivals":58},{"date":"2024-12-30","arrivals_ICU":11,"arrivals_Med_Surg":24,"arrivals_Other":17,"arrivals_PCU":2,"arrivals_Tele":3,"total_arrivals":57},{"date":"2024-12-31","arrivals_ICU":6,"arrivals_Med_Surg":20,"arrivals_Other":14,"arrivals_PCU":3,"arrivals_Tele":8,"total_arrivals":51},{"date":"2025-01-01","arrivals_ICU":8,"arrivals_Med_Surg":22,"arrivals_Other":8,"arrivals_PCU":4,"arrivals_Tele":4,"total_arrivals":46},{"date":"2025-01-02","arrivals_ICU":11,"arrivals_Med_Surg":21,"arrivals_Other":19,"arrivals_PCU":7,"arrivals_Tele":9,"total_arrivals":67},{"date":"2025-01-03","arrivals_ICU":9,"arrivals_Med_Surg":27,"arrivals_Other":16,"arrivals_PCU":3,"arrivals_Tele":2,"total_arrivals":57},{"date":"2025-01-04","arrivals_ICU":6,"arrivals_Med_Surg":26,"arrivals_Other":18,"arrivals_PCU":4,"arrivals_Tele":10,"total_arrivals":64},{"date":"2025-01-05","arrivals_ICU":6,"arrivals_Med_Surg":9,"arrivals_Other":7,"arrivals_PCU":7,"arrivals_Tele":4,"total_arrivals":33},{"date":"2025-01-06","arrivals_ICU":15,"arrivals_Med_Surg":14,"arrivals_Other":11,"arrivals_PCU":7,"arrivals_Tele":6,"total_arrivals":53},{"date":"2025-01-07","arrivals_ICU":4,"arrivals_Med_Surg":28,"arrivals_Other":12,"arrivals_PCU":3,"arrivals_Tele":4,"total_arrivals":51},{"date":"2025-01-08","arrivals_ICU":9,"arrivals_Med_Surg":30,"arrivals_Other":9,"arrivals_PCU":4,"arrivals_Tele":7,"total_arrivals":59},{"date":"2025-01-09","arrivals_ICU":5,"arrivals_Med_Surg":29,"arrivals_Other":20,"arrivals_PCU":2,"arrivals_Tele":11,"total_arrivals":67},{"date":"2025-01-10","arrivals_ICU":8,"arrivals_Med_Surg":31,"arrivals_Other":18,"arrivals_PCU":7,"arrivals_Tele":5,"total_arrivals":69},{"date":"2025-01-11","arrivals_ICU":11,"arrivals_Med_Surg":21,"arrivals_Other":14,"arrivals_PCU":3,"arrivals_Tele":7,"total_arrivals":56},{"date":"2025-01-12","arrivals_ICU":9,"arrivals_Med_Surg":29,"arrivals_Other":9,"arrivals_PCU":3,"arrivals_Tele":5,"total_arrivals":55},{"date":"2025-01-13","arrivals_ICU":11,"arrivals_Med_Surg":24,"arrivals_Other":11,"arrivals_PCU":4,"arrivals_Tele":3,"total_arrivals":53},{"date":"2025-01-14","arrivals_ICU":8,"arrivals_Med_Surg":24,"arrivals_Other":14,"arrivals_PCU":3,"arrivals_Tele":1,"total_arrivals":50},{"date":"2025-01-15","arrivals_ICU":13,"arrivals_Med_Surg":32,"arrivals_Other":15,"arrivals_PCU":5,"arrivals_Tele":6,"total_arrivals":71},{"date":"2025-01-16","arrivals_ICU":6,"arrivals_Med_Surg":21,"arrivals_Other":6,"arrivals_PCU":5,"arrivals_Tele":7,"total_arrivals":45},{"date":"2025-01-17","arrivals_ICU":9,"arrivals_Med_Surg":18,"arrivals_Other":6,"arrivals_PCU":2,"arrivals_Tele":8,"total_arrivals":43},{"date":"2025-01-18","arrivals_ICU":3,"arrivals_Med_Surg":36,"arrivals_Other":11,"arrivals_PCU":4,"arrivals_Tele":5,"total_arrivals":59},{"date":"2025-01-19","arrivals_ICU":10,"arrivals_Med_Surg":26,"arrivals_Other":9,"arrivals_PCU":3,"arrivals_Tele":2,"total_arrivals":50},{"date":"2025-01-20","arrivals_ICU":9,"arrivals_Med_Surg":20,"arrivals_Other":12,"arrivals_PCU":4,"arrivals_Tele":6,"total_arrivals":51},{"date":"2025-01-21","arrivals_ICU":10,"arrivals_Med_Surg":24,"arrivals_Other":20,"arrivals_PCU":1,"arrivals_Tele":3,"total_arrivals":58},{"date":"2025-01-22","arrivals_ICU":10,"arrivals_Med_Surg":34,"arrivals_Other":10,"arrivals_PCU":4,"arrivals_Tele":11,"total_arrivals":69},{"date":"2025-01-23","arrivals_ICU":2,"arrivals_Med_Surg":26,"arrivals_Other":11,"arrivals_PCU":7,"arrivals_Tele":4,"total_arrivals":50},{"date":"2025-01-24","arrivals_ICU":10,"arrivals_Med_Surg":31,"arrivals_Other":11,"arrivals_PCU":7,"arrivals_Tele":6,"total_arrivals":65},{"date":"2025-01-25","arrivals_ICU":15,"arrivals_Med_Surg":34,"arrivals_Other":4,"arrivals_PCU":3,"arrivals_Tele":5,"total_arrivals":61},{"date":"2025-01-26","arrivals_ICU":5,"arrivals_Med_Surg":26,"arrivals_Other":9,"arrivals_PCU":1,"arrivals_Tele":3,"total_arrivals":44},{"date":"2025-01-27","arrivals_ICU":11,"arrivals_Med_Surg":27,"arrivals_Other":16,"arrivals_PCU":6,"arrivals_Tele":5,"total_arrivals":65},{"date":"2025-01-28","arrivals_ICU":6,"arrivals_Med_Surg":32,"arrivals_Other":11,"arrivals_PCU":3,"arrivals_Tele":5,"total_arrivals":57},{"date":"2025-01-29","arrivals_ICU":3,"arrivals_Med_Surg":39,"arrivals_Other":11,"arrivals_PCU":3,"arrivals_Tele":6,"total_arrivals":62},{"date":"2025-01-30","arrivals_ICU":8,"arrivals_Med_Surg":30,"arrivals_Other":15,"arrivals_PCU":7,"arrivals_Tele":7,"total_arrivals":67}],"los_stats":{"ICU":{"count":6422,"mean":4.4,"median":2.0,"short_pct":53.6,"extended_pct":5.2},"Med_Surg":{"count":4252,"mean":7.0,"median":3.0,"short_pct":44.8,"extended_pct":10.7},"PCU":{"count":823,"mean":5.7,"median":3.0,"short_pct":44.1,"extended_pct":8.4},"Tele":{"count":424,"mean":2.8,"median":2.0,"short_pct":59.2,"extended_pct":0.9}},"hazard":[{"day":1,"hazard":0.3223},{"day":2,"hazard":0.3153},{"day":3,"hazard":0.2591},{"day":4,"hazard":0.2382},{"day":5,"hazard":0.2105},{"day":6,"hazard":0.1837},{"day":7,"hazard":0.1522},{"day":8,"hazard":0.1545},{"day":9,"hazard":0.1416},{"day":10,"hazard":0.1469},{"day":11,"hazard":0.1511},{"day":12,"hazard":0.0994},{"day":13,"hazard":0.131},{"day":14,"hazard":0.1164},{"day":15,"hazard":0.1168},{"day":16,"hazard":0.1085},{"day":17,"hazard":0.1065},{"day":18,"hazard":0.1277},{"day":19,"hazard":0.0537},{"day":20,"hazard":0.0722},{"day":21,"hazard":0.0833},{"day":22,"hazard":0.1212},{"day":23,"hazard":0.0828},{"day":24,"hazard":0.0526},{"day":25,"hazard":0.0556},{"day":26,"hazard":0.084},{"day":27,"hazard":0.1193},{"day":28,"hazard":0.0938},{"day":29,"hazard":0.046}]};
+
+const S = DATA.summary;
+const fmt = d => { const dt = new Date(d); return (dt.getMonth()+1) + '/' + dt.getDate(); };
+
+// Badge
+const badge = document.getElementById('statusBadge');
+badge.textContent = S.status;
+badge.className = 'badge ' + (S.status === 'SAFE' ? 'badge-safe' : S.status === 'NEAR FULL' ? 'badge-near' : 'badge-risk');
+
+// KPIs
+const kpis = [
+  { label: 'Current Census', value: S.current_census + '/' + S.capacity, color: S.pct_full > 95 ? '#ef4444' : S.pct_full > 80 ? '#f59e0b' : '#34d399', sub: S.pct_full + '% full' },
+  { label: 'Avg Daily Arrivals', value: S.avg_arrivals, color: '#60a5fa', sub: 'per day' },
+  { label: 'Avg Discharges', value: S.avg_discharges, color: '#a78bfa', sub: 'per day' },
+  { label: 'Expected Disch.', value: S.expected_discharges, color: '#fb923c', sub: 'tomorrow' },
+  { label: 'At Risk Days', value: S.at_risk_days + '/' + S.total_days, color: '#ef4444', sub: (S.at_risk_days/S.total_days*100).toFixed(1) + '% of year' },
+];
+document.getElementById('kpiRow').innerHTML = kpis.map(k =>
+  '<div class="card"><div class="metric-label">' + k.label + '</div><div class="metric-value" style="color:' + k.color + '">' + k.value + '</div><div class="metric-sub">' + k.sub + '</div></div>'
+).join('');
+
+// Tab switching
+function switchTab(id) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// Chart defaults
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = '#1e293b';
+Chart.defaults.font.family = "'DM Sans', sans-serif";
+
+// Census chart
+const cData = DATA.census;
+new Chart(document.getElementById('censusChart'), {
+  type: 'line',
+  data: {
+    labels: cData.map(d => fmt(d.date)),
+    datasets: [
+      { label: 'Census', data: cData.map(d => d.census), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3, pointRadius: 1 },
+      { label: 'Capacity', data: cData.map(() => S.capacity), borderColor: '#ef4444', borderDash: [6,4], pointRadius: 0, borderWidth: 1.5 },
+      { label: '80% Threshold', data: cData.map(() => Math.round(S.capacity*0.8)), borderColor: '#f59e0b', borderDash: [4,4], pointRadius: 0, borderWidth: 1 },
+    ]
+  },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } }, scales: { x: { ticks: { maxTicksToShow: 10, font: { size: 10 } } } } }
+});
+
+// Arrivals vs Discharges
+const everyOther = cData.filter((_, i) => i % 2 === 0);
+new Chart(document.getElementById('arrDischChart'), {
+  type: 'bar',
+  data: {
+    labels: everyOther.map(d => fmt(d.date)),
+    datasets: [
+      { label: 'Arrivals', data: everyOther.map(d => d.arrivals), backgroundColor: '#60a5fa', borderRadius: 3 },
+      { label: 'Discharges', data: everyOther.map(d => d.discharges), backgroundColor: '#a78bfa', borderRadius: 3 },
+    ]
+  },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { boxWidth: 10, font: { size: 10 } } } }, scales: { x: { ticks: { maxTicksToShow: 8, font: { size: 9 } } } } }
+});
+
+// Status distribution
+const sc = { SAFE: 0, 'NEAR FULL': 0, 'AT RISK': 0 };
+cData.forEach(d => { if (sc[d.status] !== undefined) sc[d.status]++; });
+new Chart(document.getElementById('statusChart'), {
+  type: 'bar',
+  data: {
+    labels: Object.keys(sc),
+    datasets: [{ data: Object.values(sc), backgroundColor: ['#059669', '#d97706', '#dc2626'], borderRadius: 6 }]
+  },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+});
+
+// Forecast chart
+const aData = DATA.arrivals_test;
+new Chart(document.getElementById('forecastChart'), {
+  type: 'line',
+  data: {
+    labels: aData.map(d => fmt(d.date)),
+    datasets: [
+      { label: 'Actual', data: aData.map(d => Math.round(d.actual)), borderColor: '#e2e8f0', borderWidth: 2.5, pointRadius: 4, tension: 0.2 },
+      { label: 'Random Forest', data: aData.map(d => Math.round(d.rf_pred*10)/10), borderColor: '#34d399', borderDash: [5,5], borderWidth: 1.5, pointRadius: 3 },
+      { label: 'Gradient Boosting', data: aData.map(d => Math.round(d.gb_pred*10)/10), borderColor: '#fb923c', borderDash: [5,5], borderWidth: 1.5, pointRadius: 3 },
+      { label: 'Ensemble', data: aData.map(d => Math.round(d.ensemble_pred*10)/10), borderColor: '#a78bfa', borderWidth: 2, pointRadius: 3 },
+    ]
+  },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } } }
+});
+
+// LOC chart
+const lData = DATA.daily_loc;
+new Chart(document.getElementById('locChart'), {
+  type: 'line',
+  data: {
+    labels: lData.map(d => fmt(d.date)),
+    datasets: [
+      { label: 'Med/Surg', data: lData.map(d => d.arrivals_Med_Surg || 0), borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,0.1)', fill: true, tension: 0.3, pointRadius: 0 },
+      { label: 'ICU', data: lData.map(d => d.arrivals_ICU || 0), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3, pointRadius: 0 },
+      { label: 'PCU', data: lData.map(d => d.arrivals_PCU || 0), borderColor: '#fb923c', backgroundColor: 'rgba(251,146,60,0.1)', fill: true, tension: 0.3, pointRadius: 0 },
+      { label: 'Tele', data: lData.map(d => d.arrivals_Tele || 0), borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.1)', fill: true, tension: 0.3, pointRadius: 0 },
+    ]
+  },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } }, scales: { x: { ticks: { maxTicksToShow: 10, font: { size: 10 } } } } }
+});
+
+// Hazard chart
+const hData = DATA.hazard;
+new Chart(document.getElementById('hazardChart'), {
+  type: 'bar',
+  data: {
+    labels: hData.map(d => 'Day ' + d.day),
+    datasets: [{
+      label: 'P(Discharge)',
+      data: hData.map(d => d.hazard),
+      backgroundColor: hData.map(d => d.hazard > 0.25 ? '#34d399' : d.hazard > 0.15 ? '#60a5fa' : '#f59e0b'),
+      borderRadius: 3,
+    }]
+  },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { ticks: { callback: v => (v*100).toFixed(0) + '%' } }, x: { ticks: { font: { size: 9 } } } } }
+});
+
+// LOS Stats
+const losLabels = { ICU: 'ICU', Med_Surg: 'Med/Surg', PCU: 'PCU', Tele: 'Telemetry' };
+const losColors = { ICU: '#3b82f6', Med_Surg: '#34d399', PCU: '#fb923c', Tele: '#a78bfa' };
+document.getElementById('losStats').innerHTML = Object.entries(DATA.los_stats).map(([unit, st]) =>
+  '<div class="stat-card"><h4 style="color:' + losColors[unit] + '">' + losLabels[unit] + '</h4><div class="stat-row">' +
+  'Patients: <strong>' + st.count.toLocaleString() + '</strong><br>' +
+  'Mean LOS: <strong>' + st.mean + 'd</strong><br>' +
+  'Median LOS: <strong>' + st.median + 'd</strong><br>' +
+  'Short (≤2d): <strong style="color:#34d399">' + st.short_pct + '%</strong><br>' +
+  'Extended (>14d): <strong style="color:#ef4444">' + st.extended_pct + '%</strong>' +
+  '</div></div>'
+).join('');
+
+// Performance table
+const perf = [
+  ['RF (Total Arrivals)', 'Regression', '5.99', '0.073', '—', '—'],
+  ['GB (Total Arrivals)', 'Regression', '7.62', '-0.649', '—', '—'],
+  ['GB (ICU Short-Stay)', 'Classification', '—', '—', '0.935', '0.853'],
+  ['LR (ICU Short-Stay)', 'Classification', '—', '—', '0.879', '0.806'],
+  ['GB (PCU Short-Stay)', 'Classification', '—', '—', '0.709', '0.586'],
+  ['GB (Tele Short-Stay)', 'Classification', '—', '—', '0.756', '0.704'],
+];
+document.getElementById('perfTable').innerHTML =
+  '<thead><tr>' + ['Model','Task','MAE','R²','AUC','F1'].map(h => '<th>' + h + '</th>').join('') + '</tr></thead>' +
+  '<tbody>' + perf.map(r => '<tr>' + r.map((c,i) => '<td' + (i===3 && c.startsWith('-') ? ' style="color:#ef4444"' : i===4 && c!=='—' ? ' style="color:#60a5fa"' : '') + '>' + c + '</td>').join('') + '</tr>').join('') + '</tbody>';
+</script>
+</body>
+</html>

@@ -1,11 +1,12 @@
 # Predicting ICU Census with Arrivals, LOS & Discharge Modeling
 
-**ICU 1 — Team 2**
-Yashraj Jadhav · Jiaqi · Janell Wang · Shiv Paul Gupta · Kris He
+**By Yashraj Jadhav**
 
 ---
 
 ## Overview
+
+![Dashboard](outputs/dashboard.png)
 
 Hospital ICU census is volatile, causing staffing challenges, ED boarding, and patient diversion risk. This project builds a predictive pipeline that combines:
 

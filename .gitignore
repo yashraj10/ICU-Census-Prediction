@@ -27,7 +27,7 @@ data/*.csv
 .DS_Store
 Thumbs.db
 
-# Outputs can be regenerated
-outputs/*.png
+# Outputs can be regenerated (keep dashboard screenshot)
 outputs/*.csv
+!outputs/dashboard.png
 !outputs/.gitkeep
