@@ -272,13 +272,25 @@ function createCensusChart(days) {
       responsive:true, maintainAspectRatio:false,
       interaction: { mode:'index', intersect:false },
       plugins: {
-        tooltip: { ...ttStyle, callbacks: {
-          afterBody: function(items) {
-            const idx = items[0].dataIndex;
-            const d = cData[idx];
-            return '\nStatus: ' + (d.status||'—') + '\nArrivals: ' + d.arrivals + '\nDischarges: ' + d.discharges;
+        tooltip: { ...ttStyle,
+          filter: function(item) { return item.datasetIndex === 0; },
+          callbacks: {
+            title: function(items) { return items[0].label; },
+            label: function(item) { return 'Census: ' + item.raw + ' patients'; },
+            afterLabel: function(item) {
+              const d = cData[item.dataIndex];
+              const statusColor = d.status==='SAFE'?'🟢':d.status==='AT RISK'?'🔴':'🟡';
+              return [
+                '',
+                statusColor + ' Status: ' + (d.status||'—'),
+                '📥 Arrivals: ' + d.arrivals,
+                '📤 Discharges: ' + d.discharges,
+                '',
+                '⚡ Occupancy: ' + (d.census/S.capacity*100).toFixed(0) + '% of ' + S.capacity + ' beds',
+              ];
+            }
           }
-        }},
+        },
         legend: { labels: { boxWidth:12, font:{size:11}, usePointStyle:true } }
       },
       scales: {
