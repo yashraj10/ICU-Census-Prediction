@@ -1,0 +1,16 @@
+.git
+.gitignore
+__pycache__
+*.py[cod]
+venv/
+.venv/
+*.xlsx
+*.xls
+data/
+outputs/
+*.png
+.DS_Store
+.ipynb_checkpoints/
+notebooks/
+docs/
+presentation/
