@@ -25,14 +25,13 @@ Data covers **Feb 2024 – Jan 2025** from two hospital sources: daily inpatient
 
 ## Key Results
 
-| Task | Model | Key Metric | Value |
-|------|-------|------------|-------|
-| Arrival Forecast (14d holdout) | Random Forest | MAE | [fill from notebook] |
-| Arrival Forecast (14d holdout) | Random Forest | R² | [fill from notebook] |
-| LOS Regression (holdout) | Random Forest | MAE | [fill from notebook] |
-| LOS Regression (holdout) | Random Forest | R² | [fill from notebook] |
-| Discharge Classification | Logistic Regression | AUC | [fill from notebook] |
-| Discharge Classification | Random Forest | AUC | [fill from notebook] |
+| Task | Model | Metric | Value |
+|------|-------|--------|-------|
+| Arrival Forecast (14d holdout) | Random Forest | MAE | 5.29 |
+| Arrival Forecast (14d holdout) | Random Forest | MAPE | 9.85% |
+| LOS Prediction (holdout) | Median Baseline | MAE | 7.72 days |
+| Discharge Classification | Logistic Regression (balanced) | AUC | 0.797 |
+| Discharge Classification | Random Forest (balanced) | AUC | 0.797 |
 
 > Run `python src/pipeline.py` to regenerate the full metrics table in `outputs/model_performance_summary.csv`.
 
