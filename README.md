@@ -20,7 +20,7 @@ The pipeline follows a modular design with no target leakage:
 
 Data covers **Feb 2024 – Jan 2025** from two hospital sources: daily inpatient level-of-care records and TeleTracking bed-request timestamps.
 
-![Dashboard](docs/dashboard.png)
+🔗 **[Live Interactive Dashboard](https://yashraj10.github.io/ICU-Census-Prediction/)**
 <!-- Replace with your actual dashboard screenshot -->
 
 ## Key Results
