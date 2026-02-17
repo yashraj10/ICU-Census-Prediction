@@ -1,0 +1,64 @@
+{
+  "arrival_model": {
+    "file": "arrival_rf.joblib",
+    "features": [
+      "arrivals_lag1",
+      "arrivals_lag3",
+      "arrivals_lag7",
+      "arrivals_lag14",
+      "arrivals_ma7",
+      "arrivals_ma14",
+      "arrivals_std7",
+      "day_of_week",
+      "is_weekend",
+      "month",
+      "week_of_year"
+    ],
+    "metrics": {
+      "mae": 5.289,
+      "rmse": 7.391,
+      "mape": 9.849,
+      "r2": 0.165,
+      "holdout_days": 14
+    },
+    "last_training_date": "2025-01-30"
+  },
+  "los_model": {
+    "file": "los_ridge.joblib",
+    "features": [
+      "Has_ICU",
+      "Has_Med_Surg",
+      "Has_PCU",
+      "Has_Tele",
+      "Care_Levels_Count",
+      "Has_Multiple_Units"
+    ],
+    "metrics": {
+      "ridge_mae": 6.852,
+      "ridge_r2": 0.086,
+      "naive_mae": 7.723
+    },
+    "log_transform": true
+  },
+  "short_stay_classifier": {
+    "file": "short_stay_logit.joblib",
+    "features": [
+      "Has_ICU",
+      "Has_Med_Surg",
+      "Has_PCU",
+      "Has_Tele",
+      "Care_Levels_Count",
+      "Has_Multiple_Units"
+    ],
+    "metrics": {
+      "auc": 0.797,
+      "precision": 0.567,
+      "recall": 0.69,
+      "f1": 0.623,
+      "short_stay_threshold_days": 2
+    }
+  },
+  "hazard_table": {
+    "file": "icu_hazard_table.csv"
+  }
+}
