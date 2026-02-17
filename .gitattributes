@@ -1,0 +1,3 @@
+# Tell GitHub Linguist that notebooks are documentation, not source code.
+# This ensures the repo is tagged as "Python" based on the src/*.py files.
+*.ipynb linguist-documentation

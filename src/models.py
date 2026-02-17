@@ -1,320 +1,284 @@
 """
-models.py
-==========
-Train and evaluate predictive models:
-  1. Daily arrival forecast  (Random Forest, Gradient Boosting, Ensemble)
-  2. Short-stay classifier   (Logistic Regression, RF, GB)
-  3. Discharge hazard table  (empirical survival-based)
+models.py — Train and evaluate arrival, LOS, and discharge models.
 
-Usage:
-    from src.models import (
-        train_arrival_models,
-        train_short_stay_classifier,
-        build_hazard_table,
-    )
+Extracted from notebook Steps 11–14.
+Each function returns fitted models and evaluation metrics.
 """
 
 import numpy as np
 import pandas as pd
-from dataclasses import dataclass, field
-
-from sklearn.ensemble import (
-    RandomForestRegressor,
-    GradientBoostingRegressor,
-    RandomForestClassifier,
-    GradientBoostingClassifier,
-)
-from sklearn.linear_model import LogisticRegression
+from math import sqrt
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.linear_model import Ridge, LogisticRegression
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
+    median_absolute_error,
     r2_score,
     roc_auc_score,
-    f1_score,
+    precision_recall_fscore_support,
     classification_report,
+    confusion_matrix,
 )
-from sklearn.model_selection import train_test_split
 
 
-# ──────────────────────────────────────────────────────────────
-# Result containers
-# ──────────────────────────────────────────────────────────────
-@dataclass
-class RegressionResult:
-    name: str
-    model: object
-    y_true: np.ndarray
-    y_pred: np.ndarray
-    mae: float = 0.0
-    rmse: float = 0.0
-    r2: float = 0.0
-    mape: float = 0.0
+# ---------------------------------------------------------------------------
+# Arrival forecasting (Steps 11–12)
+# ---------------------------------------------------------------------------
 
-    def __post_init__(self):
-        self.mae = mean_absolute_error(self.y_true, self.y_pred)
-        self.rmse = np.sqrt(mean_squared_error(self.y_true, self.y_pred))
-        self.r2 = r2_score(self.y_true, self.y_pred)
-        self.mape = 100 * np.mean(
-            np.abs((self.y_true - self.y_pred) / np.where(self.y_true == 0, 1, self.y_true))
-        )
-
-    def summary(self) -> dict:
-        return {
-            "Model": self.name,
-            "MAE": round(self.mae, 2),
-            "RMSE": round(self.rmse, 2),
-            "R²": round(self.r2, 3),
-            "MAPE (%)": round(self.mape, 2),
-        }
-
-
-@dataclass
-class ClassificationResult:
-    name: str
-    model: object
-    y_true: np.ndarray
-    y_pred: np.ndarray
-    y_proba: np.ndarray
-    auc: float = 0.0
-    f1: float = 0.0
-
-    def __post_init__(self):
-        self.auc = roc_auc_score(self.y_true, self.y_proba)
-        self.f1 = f1_score(self.y_true, self.y_pred)
-
-    def summary(self) -> dict:
-        report = classification_report(self.y_true, self.y_pred, output_dict=True)
-        return {
-            "Model": self.name,
-            "AUC": round(self.auc, 3),
-            "F1": round(self.f1, 3),
-            "Precision": round(report["1"]["precision"], 3),
-            "Recall": round(report["1"]["recall"], 3),
-        }
-
-
-# ──────────────────────────────────────────────────────────────
-# 1. Arrival models
-# ──────────────────────────────────────────────────────────────
-def train_arrival_models(
-    daily: pd.DataFrame,
-    feature_cols: list[str],
-    target: str = "total_arrivals",
+def train_arrival_model(
+    features: pd.DataFrame,
+    target_col: str = "arrivals",
     holdout_days: int = 14,
+    n_estimators: int = 400,
     random_state: int = 42,
-) -> tuple[list[RegressionResult], pd.DataFrame]:
+) -> dict:
     """
-    Train Random Forest, Gradient Boosting, and an Ensemble for
-    daily arrival prediction using a time-based holdout split.
+    Train a Random Forest regressor on daily arrival features with a
+    time-ordered holdout split.
 
     Parameters
     ----------
-    daily : pd.DataFrame
-        Must have ``date``, ``target``, and all ``feature_cols``.
-    feature_cols : list[str]
-        Column names to use as features.
-    target : str
-        Target column name.
+    features : pd.DataFrame
+        Output of build_arrival_features() — DatetimeIndex, includes target.
+    target_col : str
+        Name of the arrival count column.
     holdout_days : int
-        Number of trailing days to use as the test set.
+        Number of trailing days reserved for evaluation.
+    n_estimators : int
+        Number of trees.
     random_state : int
-        Seed for reproducibility.
+        Reproducibility seed.
 
     Returns
     -------
-    results : list[RegressionResult]
-        One result object per model (RF, GB, Ensemble).
-    test_df : pd.DataFrame
-        Test-set dates with actual and predicted values.
+    dict with keys: model, metrics, predictions, feature_importance
     """
-    df = daily.dropna(subset=feature_cols + [target]).copy()
+    data = features.dropna().copy()
+    feat_cols = [c for c in data.columns if c != target_col]
 
-    cutoff = df["date"].max() - pd.Timedelta(days=holdout_days)
-    train = df[df["date"] <= cutoff]
-    test = df[df["date"] > cutoff]
+    train = data.iloc[:-holdout_days]
+    test = data.iloc[-holdout_days:]
 
-    X_train, y_train = train[feature_cols], train[target].values
-    X_test, y_test = test[feature_cols], test[target].values
+    rf = RandomForestRegressor(n_estimators=n_estimators, random_state=random_state)
+    rf.fit(train[feat_cols], train[target_col])
+    pred = rf.predict(test[feat_cols])
 
-    # Random Forest
-    rf = RandomForestRegressor(
-        n_estimators=500, max_depth=10, min_samples_leaf=5,
-        random_state=random_state,
-    )
-    rf.fit(X_train, y_train)
-    rf_pred = rf.predict(X_test)
+    y_true = test[target_col].values
+    metrics = _regression_metrics(y_true, pred, include_mape=True)
 
-    # Gradient Boosting
-    gb = GradientBoostingRegressor(
-        n_estimators=300, max_depth=4, learning_rate=0.05,
-        random_state=random_state,
-    )
-    gb.fit(X_train, y_train)
-    gb_pred = gb.predict(X_test)
+    predictions = test.copy()
+    predictions["predicted_arrivals"] = pred
 
-    # Ensemble (simple average)
-    ens_pred = (rf_pred + gb_pred) / 2
+    importance = pd.DataFrame({
+        "feature": feat_cols,
+        "importance": rf.feature_importances_,
+    }).sort_values("importance", ascending=False)
 
-    results = [
-        RegressionResult("RandomForest", rf, y_test, rf_pred),
-        RegressionResult("GradientBoosting", gb, y_test, gb_pred),
-        RegressionResult("Ensemble (RF+GB)", None, y_test, ens_pred),
-    ]
+    print(f"📈 Arrival RF — {holdout_days}-day holdout")
+    print(f"   MAE : {metrics['MAE']:.2f}")
+    print(f"   RMSE: {metrics['RMSE']:.2f}")
+    print(f"   MAPE: {metrics['MAPE']:.2f}%")
+    print(f"   R²  : {metrics['R2']:.3f}")
 
-    test_df = pd.DataFrame({
-        "date": test["date"].values,
-        "actual": y_test,
-        "rf_pred": rf_pred,
-        "gb_pred": gb_pred,
-        "ensemble_pred": ens_pred,
-    })
-
-    return results, test_df
+    return {
+        "model": rf,
+        "metrics": metrics,
+        "predictions": predictions,
+        "feature_importance": importance,
+    }
 
 
-def feature_importance(model, feature_cols: list[str], top_n: int = 10) -> pd.Series:
-    """Return sorted feature importances from a tree-based model."""
-    return (
-        pd.Series(model.feature_importances_, index=feature_cols)
-        .sort_values(ascending=False)
-        .head(top_n)
-    )
+def refit_arrival_model_full(
+    features: pd.DataFrame,
+    target_col: str = "arrivals",
+    n_estimators: int = 400,
+    random_state: int = 42,
+) -> RandomForestRegressor:
+    """Refit arrival RF on the full dataset for production forecasting."""
+    data = features.dropna().copy()
+    feat_cols = [c for c in data.columns if c != target_col]
+
+    rf = RandomForestRegressor(n_estimators=n_estimators, random_state=random_state)
+    rf.fit(data[feat_cols], data[target_col])
+    print(f"✅ Arrival model refit on {len(data)} days (full data)")
+    return rf
 
 
-# ──────────────────────────────────────────────────────────────
-# 2. Short-stay classifier
-# ──────────────────────────────────────────────────────────────
-def train_short_stay_classifier(
+# ---------------------------------------------------------------------------
+# LOS regression (Step 13)
+# ---------------------------------------------------------------------------
+
+def train_los_models(
     daily_care: pd.DataFrame,
-    unit_col: str = "ICU",
-    threshold: int = 2,
     test_size: float = 0.2,
     random_state: int = 42,
-) -> list[ClassificationResult]:
+) -> dict:
     """
-    Train classifiers to predict whether a patient's LOS in
-    *unit_col* is ≤ *threshold* days ("short stay").
-
-    Three models are trained: Logistic Regression, Random Forest,
-    and Gradient Boosting (all with class_weight='balanced' where
-    applicable).
+    Train baseline (naive median), Ridge, and Random Forest regressors
+    for total LOS prediction.
 
     Parameters
     ----------
     daily_care : pd.DataFrame
-        Must include encounter flags (Has_ICU, etc.) and unit LOS.
-    unit_col : str
-        Unit column to classify.
-    threshold : int
-        Days cutoff for short-stay label.
-    test_size : float
-        Fraction held out for testing.
-    random_state : int
+        Must contain LOS_Total and Has_* / Care_Levels_Count columns.
 
     Returns
     -------
-    list[ClassificationResult]
+    dict with keys: ridge, rf, metrics (DataFrame), predictions
     """
-    pts = daily_care[daily_care[unit_col] > 0].copy()
-    pts["short_stay"] = (pts[unit_col] <= threshold).astype(int)
-
     feature_cols = [
         "Has_ICU", "Has_Med_Surg", "Has_PCU", "Has_Tele",
-        "Care_Levels_Count", "Has_Multiple_Units", "Total",
+        "Care_Levels_Count", "Has_Multiple_Units",
     ]
 
-    X = pts[feature_cols]
-    y = pts["short_stay"]
+    df = daily_care[["LOS_Total"] + feature_cols].dropna().copy()
+    df = df[df["LOS_Total"] > 0]
+
+    X = df[feature_cols].astype(float)
+    y = df["LOS_Total"].astype(float)
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, stratify=y, random_state=random_state,
+        X, y, test_size=test_size, random_state=random_state
     )
 
-    classifiers = [
-        ("Logistic", LogisticRegression(
-            class_weight="balanced", max_iter=1000, random_state=random_state
-        )),
-        ("RandomForest", RandomForestClassifier(
-            n_estimators=200, class_weight="balanced", random_state=random_state
-        )),
-        ("GradientBoosting", GradientBoostingClassifier(
-            n_estimators=200, max_depth=3, random_state=random_state
-        )),
-    ]
+    # Naive baseline: constant median
+    yhat_naive = np.full_like(y_test, fill_value=y_train.median())
 
-    results = []
-    for name, clf in classifiers:
-        clf.fit(X_train, y_train)
-        proba = clf.predict_proba(X_test)[:, 1]
-        pred = clf.predict(X_test)
-        results.append(
-            ClassificationResult(
-                f"{name} ({unit_col})", clf, y_test.values, pred, proba
-            )
-        )
+    # Ridge
+    ridge = Ridge(alpha=1.0)
+    ridge.fit(X_train, y_train)
+    yhat_ridge = ridge.predict(X_test)
 
-    return results
+    # Random Forest
+    rf = RandomForestRegressor(n_estimators=400, random_state=random_state)
+    rf.fit(X_train, y_train)
+    yhat_rf = rf.predict(X_test)
+
+    m_naive = _regression_metrics(y_test, yhat_naive)
+    m_ridge = _regression_metrics(y_test, yhat_ridge)
+    m_rf = _regression_metrics(y_test, yhat_rf)
+
+    metrics = pd.DataFrame([
+        {"Model": "Naive (median)", **m_naive},
+        {"Model": "Ridge", **m_ridge},
+        {"Model": "RandomForest", **m_rf},
+    ])
+
+    print("🏥 LOS prediction — holdout metrics")
+    for _, row in metrics.iterrows():
+        print(f"   {row['Model']:<18s}  MAE={row['MAE']:.2f}  RMSE={row['RMSE']:.2f}  R²={row['R2']:.3f}")
+
+    predictions = X_test.copy()
+    predictions["y_true"] = y_test.values
+    predictions["yhat_ridge"] = yhat_ridge
+    predictions["yhat_rf"] = yhat_rf
+
+    return {
+        "ridge": ridge,
+        "rf": rf,
+        "metrics": metrics,
+        "predictions": predictions,
+    }
 
 
-# ──────────────────────────────────────────────────────────────
-# 3. Discharge hazard table
-# ──────────────────────────────────────────────────────────────
-def build_hazard_table(
-    los_series: pd.Series,
-    max_day: int = 30,
-) -> pd.DataFrame:
+# ---------------------------------------------------------------------------
+# Discharge classification (Steps 8 & 14)
+# ---------------------------------------------------------------------------
+
+def train_discharge_models(
+    daily_care: pd.DataFrame,
+    short_threshold: int = 2,
+    test_size: float = 0.2,
+    random_state: int = 42,
+) -> dict:
     """
-    Build an empirical hazard (discharge probability) table from
-    a series of observed LOS values.
-
-    hazard[d] = P(discharge on day d | still in unit on day d)
+    Train Logistic Regression and Random Forest classifiers for
+    short-stay (≤ threshold days) vs. longer-stay discharge prediction.
 
     Parameters
     ----------
-    los_series : pd.Series
-        Raw LOS values (one per patient).
-    max_day : int
-        Cap LOS at this value.
+    daily_care : pd.DataFrame
+        Must contain LOS_Total and Has_* / Care_Levels_Count columns.
+    short_threshold : int
+        LOS days at or below which a stay is classified as "short".
 
     Returns
     -------
-    pd.DataFrame
-        Columns: day, at_risk, discharged, hazard, survival.
+    dict with keys: logistic, rf, metrics (DataFrame), predictions
     """
-    capped = los_series.clip(upper=max_day)
+    feature_cols = [
+        "Has_ICU", "Has_Med_Surg", "Has_PCU", "Has_Tele",
+        "Care_Levels_Count", "Has_Multiple_Units",
+    ]
 
-    at_risk = np.zeros(max_day + 1)
-    discharged = np.zeros(max_day + 1)
+    df = daily_care[["LOS_Total"] + feature_cols].dropna().copy()
+    df = df[df["LOS_Total"] > 0]
+    df["label_short"] = (df["LOS_Total"] <= short_threshold).astype(int)
 
-    for los in capped:
-        for d in range(1, int(los) + 1):
-            if d <= max_day:
-                at_risk[d] += 1
-        if int(los) <= max_day:
-            discharged[int(los)] += 1
+    X = df[feature_cols].astype(float)
+    y = df["label_short"]
 
-    hazard = np.zeros(max_day + 1)
-    survival = np.ones(max_day + 1)
-    for d in range(1, max_day + 1):
-        hazard[d] = discharged[d] / at_risk[d] if at_risk[d] > 0 else 0
-        survival[d] = survival[d - 1] * (1 - hazard[d])
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, stratify=y, test_size=test_size, random_state=random_state
+    )
 
-    rows = []
-    for d in range(1, max_day + 1):
-        rows.append({
-            "day": d,
-            "at_risk": int(at_risk[d]),
-            "discharged": int(discharged[d]),
-            "hazard": round(hazard[d], 4),
-            "survival": round(survival[d], 4),
-        })
+    # Logistic Regression (balanced)
+    logit = LogisticRegression(max_iter=5000, class_weight="balanced")
+    logit.fit(X_train, y_train)
+    proba_logit = logit.predict_proba(X_test)[:, 1]
+    pred_logit = (proba_logit >= 0.5).astype(int)
+    auc_logit = roc_auc_score(y_test, proba_logit)
 
-    return pd.DataFrame(rows)
+    # Random Forest (balanced)
+    rf = RandomForestClassifier(n_estimators=400, random_state=random_state, class_weight="balanced")
+    rf.fit(X_train, y_train)
+    proba_rf = rf.predict_proba(X_test)[:, 1]
+    pred_rf = (proba_rf >= 0.5).astype(int)
+    auc_rf = roc_auc_score(y_test, proba_rf)
+
+    p_l, r_l, f1_l, _ = precision_recall_fscore_support(y_test, pred_logit, average="binary", zero_division=0)
+    p_r, r_r, f1_r, _ = precision_recall_fscore_support(y_test, pred_rf, average="binary", zero_division=0)
+
+    metrics = pd.DataFrame([
+        {"Model": "LogisticRegression", "AUC": auc_logit, "Precision": p_l, "Recall": r_l, "F1": f1_l},
+        {"Model": "RandomForest", "AUC": auc_rf, "Precision": p_r, "Recall": r_r, "F1": f1_r},
+    ])
+
+    print("🚪 Discharge (Short vs Other) — holdout metrics")
+    for _, row in metrics.iterrows():
+        print(f"   {row['Model']:<22s}  AUC={row['AUC']:.3f}  P={row['Precision']:.3f}  R={row['Recall']:.3f}  F1={row['F1']:.3f}")
+
+    predictions = X_test.copy()
+    predictions["y_true"] = y_test.values
+    predictions["proba_logit"] = proba_logit
+    predictions["proba_rf"] = proba_rf
+    predictions["pred_logit"] = pred_logit
+    predictions["pred_rf"] = pred_rf
+
+    return {
+        "logistic": logit,
+        "rf": rf,
+        "metrics": metrics,
+        "predictions": predictions,
+    }
 
 
-def get_hazard_array(hazard_df: pd.DataFrame, max_day: int = 30) -> np.ndarray:
-    """Convert hazard DataFrame back to a numpy array indexed by day."""
-    arr = np.zeros(max_day + 1)
-    for _, row in hazard_df.iterrows():
-        arr[int(row["day"])] = row["hazard"]
-    return arr
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _regression_metrics(y_true, y_pred, include_mape: bool = False) -> dict:
+    """Compute standard regression metrics."""
+    result = {
+        "MAE": mean_absolute_error(y_true, y_pred),
+        "MedAE": median_absolute_error(y_true, y_pred),
+        "RMSE": sqrt(mean_squared_error(y_true, y_pred)),
+        "R2": r2_score(y_true, y_pred),
+    }
+    if include_mape:
+        y_true, y_pred = np.array(y_true), np.array(y_pred)
+        mask = y_true != 0
+        result["MAPE"] = (np.abs((y_pred[mask] - y_true[mask]) / y_true[mask])).mean() * 100
+    return result

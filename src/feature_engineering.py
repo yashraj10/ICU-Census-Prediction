@@ -1,184 +1,187 @@
 """
-feature_engineering.py
-=======================
-Build time-series and patient-level features for:
-  - Daily arrival forecasting (lags, rolling stats, calendar features)
-  - LOS analysis (category buckets, unit flags)
+feature_engineering.py — Build arrival features, LOS features, and discharge hazard tables.
 
-All rolling / lag features are computed from t-1 to prevent data leakage.
-
-Usage:
-    from src.feature_engineering import build_daily_features, build_los_features
+Extracted from notebook Steps 3–5.
+All features are constructed with no target leakage (lag-only windows).
 """
 
 import pandas as pd
 import numpy as np
 
 
-# ──────────────────────────────────────────────────────────────
-# Daily arrival features (for time-series forecasting)
-# ──────────────────────────────────────────────────────────────
-def build_daily_features(
-    teletrack: pd.DataFrame,
-    lags: list[int] | None = None,
-    rolling_windows: list[int] | None = None,
-) -> pd.DataFrame:
+# ---------------------------------------------------------------------------
+# Arrival features (Step 3)
+# ---------------------------------------------------------------------------
+
+def build_arrival_features(teletrack: pd.DataFrame) -> pd.DataFrame:
     """
-    Aggregate TeleTracking bed requests into daily arrival counts
-    and engineer time-series features.
+    Aggregate TeleTracking bed requests into daily arrival counts and
+    engineer lag / rolling / calendar features with **no leakage**.
 
     Parameters
     ----------
     teletrack : pd.DataFrame
-        Output of ``load_teletracking()`` – must have ``date`` and
-        ``LOC_Group`` columns.
-    lags : list[int], optional
-        Lag periods to create (default: [1, 2, 3, 7, 14]).
-    rolling_windows : list[int], optional
-        Rolling-stat windows (default: [3, 7, 14]).
+        TeleTracking data with a parsed 'Bedrequest Timestamp' column.
 
     Returns
     -------
     pd.DataFrame
-        One row per calendar day.  Columns include:
-        ``date``, ``total_arrivals``, ``arrivals_<LOC>``, lag/rolling
-        features, and calendar variables.
-
-    Notes
-    -----
-    All rolling/lag features are shifted by 1 day so they use only
-    past information (no leakage).
+        DatetimeIndex dataframe with arrival features, NaN-free.
     """
-    if lags is None:
-        lags = [1, 2, 3, 7, 14]
-    if rolling_windows is None:
-        rolling_windows = [3, 7, 14]
+    teletrack = teletrack.copy()
+    teletrack["Bedrequest Timestamp"] = pd.to_datetime(teletrack["Bedrequest Timestamp"])
+    teletrack["Date"] = teletrack["Bedrequest Timestamp"].dt.date
 
-    # --- aggregate ---
-    daily_total = (
-        teletrack.groupby("date").size().reset_index(name="total_arrivals")
+    daily = teletrack.groupby("Date").size().reset_index(name="arrivals")
+    daily["Date"] = pd.to_datetime(daily["Date"])
+
+    # Full date index (no gaps)
+    idx = pd.date_range(daily["Date"].min(), daily["Date"].max(), freq="D")
+    df = pd.DataFrame(index=idx)
+    df["arrivals"] = daily.set_index("Date")["arrivals"].reindex(idx).fillna(0)
+
+    # Lag features
+    for k in [1, 3, 7, 14]:
+        df[f"arrivals_lag{k}"] = df["arrivals"].shift(k)
+
+    # Rolling stats on the *lagged* series (past-only → no leakage)
+    lagged = df["arrivals"].shift(1)
+    df["arrivals_ma7"] = lagged.rolling(7, min_periods=7).mean()
+    df["arrivals_ma14"] = lagged.rolling(14, min_periods=14).mean()
+    df["arrivals_std7"] = lagged.rolling(7, min_periods=7).std()
+
+    # Calendar features
+    df["day_of_week"] = df.index.dayofweek
+    df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
+    df["month"] = df.index.month
+    df["week_of_year"] = df.index.isocalendar().week.astype(int)
+
+    features = df.dropna().copy()
+    print(
+        f"✅ Built arrival features: {features.shape[0]} days "
+        f"({features.index.min().date()} → {features.index.max().date()})"
     )
-    daily_by_loc = (
-        teletrack.groupby(["date", "LOC_Group"])
-        .size()
-        .unstack(fill_value=0)
-        .reset_index()
-    )
-    daily_by_loc.columns = ["date"] + [
-        f"arrivals_{c}" for c in daily_by_loc.columns[1:]
-    ]
-
-    daily = daily_total.merge(daily_by_loc, on="date", how="left")
-    daily["date"] = pd.to_datetime(daily["date"])
-    daily = daily.sort_values("date").reset_index(drop=True)
-
-    # --- calendar features ---
-    daily["day_of_week"] = daily["date"].dt.dayofweek
-    daily["is_weekend"] = (daily["day_of_week"] >= 5).astype(int)
-    daily["month"] = daily["date"].dt.month
-    daily["day_of_month"] = daily["date"].dt.day
-    daily["iso_week"] = daily["date"].dt.isocalendar().week.astype(int)
-
-    # --- lags (from t-1) ---
-    target = "total_arrivals"
-    for lag in lags:
-        daily[f"lag_{lag}"] = daily[target].shift(lag)
-
-    # --- rolling stats (from t-1 to avoid leakage) ---
-    shifted = daily[target].shift(1)
-    for w in rolling_windows:
-        daily[f"ma_{w}"] = shifted.rolling(w).mean()
-        daily[f"std_{w}"] = shifted.rolling(w).std()
-
-    # --- LOC-specific lags ---
-    for loc in ["ICU", "Med_Surg", "PCU", "Tele"]:
-        col = f"arrivals_{loc}"
-        if col in daily.columns:
-            daily[f"{col}_lag1"] = daily[col].shift(1)
-            daily[f"{col}_ma7"] = daily[col].shift(1).rolling(7).mean()
-
-    return daily
+    return features
 
 
-def get_feature_columns(daily: pd.DataFrame) -> list[str]:
+# ---------------------------------------------------------------------------
+# LOS features (Steps 4–5)
+# ---------------------------------------------------------------------------
+
+def engineer_los_features(daily_care: pd.DataFrame) -> pd.DataFrame:
     """
-    Return the list of model-ready feature column names
-    (excludes date, target, and raw arrival counts).
-    """
-    exclude_prefixes = ("date", "total_arrivals")
-    exclude_exact = {
-        "arrivals_ICU", "arrivals_Med_Surg", "arrivals_PCU",
-        "arrivals_Tele", "arrivals_Other",
-    }
-    return [
-        c
-        for c in daily.columns
-        if c not in exclude_exact
-        and not c.startswith(exclude_prefixes)
-        and c != "date"
-        and c != "total_arrivals"
-    ]
+    Derive LOS-related features per encounter from the daily inpatient data.
 
-
-# ──────────────────────────────────────────────────────────────
-# LOS features (for encounter-level analysis)
-# ──────────────────────────────────────────────────────────────
-LOS_BINS = [0, 2, 7, 14, float("inf")]
-LOS_LABELS = ["Short (1-2d)", "Medium (3-7d)", "Long (8-14d)", "Extended (>14d)"]
-
-
-def build_los_features(
-    daily_care: pd.DataFrame,
-    unit_col: str = "ICU",
-    cap: int = 30,
-) -> pd.DataFrame:
-    """
-    For patients with time in *unit_col*, compute LOS category and
-    a log-transformed LOS.
+    Adds columns: LOS_ICU, LOS_Med_Surg, LOS_PCU, LOS_Tele, LOS_Total,
+    Has_* flags, Care_Levels_Count, LOS_Category, Patient_Type.
 
     Parameters
     ----------
     daily_care : pd.DataFrame
-        Encounter-level frame with unit flags already added.
-    unit_col : str
-        Which unit column to analyse (ICU, Med_Surg, PCU, Tele).
-    cap : int
-        Cap LOS at this many days for modelling purposes.
+        Cleaned daily inpatient level-of-care data.
 
     Returns
     -------
     pd.DataFrame
-        Filtered to patients with ``unit_col > 0``, with new columns:
-        ``LOS_capped``, ``LOS_log``, ``LOS_category``.
+        Enriched dataframe with LOS features.
     """
-    df = daily_care[daily_care[unit_col] > 0].copy()
-    df["LOS_capped"] = df[unit_col].clip(upper=cap)
-    df["LOS_log"] = np.log1p(df["LOS_capped"])
-    df["LOS_category"] = pd.cut(
-        df[unit_col], bins=LOS_BINS, labels=LOS_LABELS, right=True
-    )
+    df = daily_care.copy()
+
+    # Map raw columns to standardized LOS columns
+    for col in ["ICU", "Med_Surg", "PCU", "Tele", "Total"]:
+        los_col = f"LOS_{col}"
+        if los_col not in df.columns:
+            df[los_col] = pd.to_numeric(df.get(col), errors="coerce")
+
+    # Binary flags
+    for unit in ["ICU", "Med_Surg", "PCU", "Tele"]:
+        df[f"Has_{unit}"] = (df[f"LOS_{unit}"] > 0).astype(int)
+
+    df["Care_Levels_Count"] = df[["Has_ICU", "Has_Med_Surg", "Has_PCU", "Has_Tele"]].sum(axis=1)
+    df["Has_Multiple_Units"] = (df["Care_Levels_Count"] > 1).astype(int)
+
+    # LOS category
+    df["LOS_Category"] = df["LOS_Total"].apply(_categorize_los)
+
+    # Patient type
+    df["Patient_Type"] = df.apply(_classify_patient, axis=1)
+
+    print(f"✅ Engineered LOS features for {len(df):,} encounters")
     return df
 
 
-def los_summary(daily_care: pd.DataFrame) -> pd.DataFrame:
+def _categorize_los(days: float) -> str:
+    """Bin total LOS into clinically meaningful categories."""
+    if days <= 2:
+        return "1_Short (1-2 days)"
+    elif days <= 7:
+        return "2_Medium (3-7 days)"
+    elif days <= 14:
+        return "3_Long (8-14 days)"
+    else:
+        return "4_Extended (>14 days)"
+
+
+def _classify_patient(row: pd.Series) -> str:
+    """Assign a patient type label based on unit flags."""
+    if row["Has_ICU"] == 1 and row["Care_Levels_Count"] == 1:
+        return "ICU_only"
+    if row["Has_ICU"] == 1:
+        return "ICU_plus_others"
+    if row["Has_Med_Surg"] == 1 and row["Care_Levels_Count"] == 1:
+        return "Med_Surg_only"
+    return "Other"
+
+
+# ---------------------------------------------------------------------------
+# ICU discharge hazard (Step 5)
+# ---------------------------------------------------------------------------
+
+def build_icu_discharge_hazard(
+    daily_care: pd.DataFrame,
+    max_los: int = 30,
+) -> pd.DataFrame:
     """
-    Return a summary table of LOS statistics for every unit.
+    Compute an empirical ICU discharge hazard table:
+    P(discharge on day d | still in ICU at start of day d).
+
+    Parameters
+    ----------
+    daily_care : pd.DataFrame
+        Must contain 'Has_ICU' and 'LOS_Total' columns (from engineer_los_features).
+    max_los : int
+        Cap LOS at this value to avoid thin tails (default 30).
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: Days_Completed, P_Discharge_Next_Day, Survival
     """
-    records = []
-    for unit, col in [("ICU", "ICU"), ("Med_Surg", "Med_Surg"),
-                      ("PCU", "PCU"), ("Tele", "Tele")]:
-        pts = daily_care[daily_care[col] > 0][col]
-        if len(pts) == 0:
-            continue
-        records.append({
-            "Unit": unit,
-            "N_patients": len(pts),
-            "Mean_LOS": round(pts.mean(), 2),
-            "Median_LOS": pts.median(),
-            "Std_LOS": round(pts.std(), 2),
-            "Short_pct": round(100 * (pts <= 2).sum() / len(pts), 1),
-            "Medium_pct": round(100 * ((pts > 2) & (pts <= 7)).sum() / len(pts), 1),
-            "Long_pct": round(100 * ((pts > 7) & (pts <= 14)).sum() / len(pts), 1),
-            "Extended_pct": round(100 * (pts > 14).sum() / len(pts), 1),
+    icu = daily_care[daily_care["Has_ICU"] == 1].copy()
+    icu = icu[icu["LOS_Total"].notna() & (icu["LOS_Total"] > 0)]
+    icu["LOS_Capped"] = icu["LOS_Total"].clip(upper=max_los).round().astype(int)
+
+    # Empirical PMF
+    counts = icu["LOS_Capped"].value_counts().sort_index()
+    all_days = pd.Index(range(1, max_los + 1), name="LOS_Day")
+    counts = counts.reindex(all_days, fill_value=0)
+    total = counts.sum()
+    pmf = counts / total
+
+    # Survival and hazard
+    survival = 1.0 - pmf.cumsum()
+    survival = pd.concat([pd.Series([1.0], index=[0]), survival])
+
+    hazard_records = []
+    for d in range(0, max_los):
+        s = survival.iloc[d] if d < len(survival) else 0.0
+        p = (pmf.iloc[d] / s) if s > 0 else 0.0
+        hazard_records.append({
+            "Days_Completed": d,
+            "P_Discharge_Next_Day": round(p, 4),
+            "Survival": round(s, 4),
         })
-    return pd.DataFrame(records)
+
+    hazard_df = pd.DataFrame(hazard_records)
+    print(f"✅ Built ICU discharge hazard table ({len(hazard_df)} rows, {total:,.0f} ICU stays)")
+    return hazard_df
